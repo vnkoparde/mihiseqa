@@ -1,0 +1,7 @@
+[client]
+database = mihiseqa
+user = vnkoparde
+password = koparde
+HOST = localhost
+default-character-set = utf8
+

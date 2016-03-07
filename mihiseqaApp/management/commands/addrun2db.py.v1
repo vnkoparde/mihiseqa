@@ -1,0 +1,290 @@
+#!/usr/bin/env python
+import os,json,datetime
+import sys,glob2,itertools
+import HTSeq
+from multiprocessing.dummy import Pool as ThreadPool
+from django.core.management.base import BaseCommand, CommandError
+from thirdapp.models import *
+
+class SSline:
+	q2mee = dict()
+	q2mee[0] = 1.0
+	q2mee[1] = 0.794328234724
+	q2mee[2] = 0.63095734448
+	q2mee[3] = 0.501187233627
+	q2mee[4] = 0.398107170553
+	q2mee[5] = 0.316227766017
+	q2mee[6] = 0.251188643151
+	q2mee[7] = 0.199526231497
+	q2mee[8] = 0.158489319246
+	q2mee[9] = 0.125892541179
+	q2mee[10] = 0.1
+	q2mee[11] = 0.0794328234724
+	q2mee[12] = 0.063095734448
+	q2mee[13] = 0.0501187233627
+	q2mee[14] = 0.0398107170553
+	q2mee[15] = 0.0316227766017
+	q2mee[16] = 0.0251188643151
+	q2mee[17] = 0.0199526231497
+	q2mee[18] = 0.0158489319246
+	q2mee[19] = 0.0125892541179
+	q2mee[20] = 0.01
+	q2mee[21] = 0.00794328234724
+	q2mee[22] = 0.0063095734448
+	q2mee[23] = 0.00501187233627
+	q2mee[24] = 0.00398107170553
+	q2mee[25] = 0.00316227766017
+	q2mee[26] = 0.00251188643151
+	q2mee[27] = 0.00199526231497
+	q2mee[28] = 0.00158489319246
+	q2mee[29] = 0.00125892541179
+	q2mee[30] = 0.001
+	q2mee[31] = 0.000794328234724
+	q2mee[32] = 0.00063095734448
+	q2mee[33] = 0.000501187233627
+	q2mee[34] = 0.000398107170553
+	q2mee[35] = 0.000316227766017
+	q2mee[36] = 0.000251188643151
+	q2mee[37] = 0.000199526231497
+	q2mee[38] = 0.000158489319246
+	q2mee[39] = 0.000125892541179
+	q2mee[40] = 0.0001
+	q2mee[41] = 0.0000794328234724
+
+	def getInstrument(self):
+		for r in HTSeq.FastqReader(self.r1):
+			serialNumber=r.name.split(":")[0]
+			try:
+				instrument=Instruments.objects.get(serial_number=serialNumber)
+			except:
+				sys.exit("Instrument with Serial Number "+serialNumber+" not found in the database!")
+			break
+		return instrument
+
+	def getOperator(self):
+		try:
+			operator=Operators.objects.get(first_name=self.operatorName)
+		except:
+			try:
+				operator=Operators.objects.get(last_name=self.operatorName)
+			except:
+				sys.exit("Operator "+self.operatorName+" not found in the database! \nCheck samplesheet in "+self.dir)
+		return operator
+	
+	def calculatestats(self):
+		if self.r1==self.r2:
+			return 1
+		if self.r2!="":	# paired end
+			for r1,r2 in itertools.izip(HTSeq.FastqReader(self.r1),HTSeq.FastqReader(self.r2)):
+				tile=int(r1.name.split(":")[4])
+				if not tile in self.stats:
+					self.stats[tile]=dict()
+					self.stats[tile]['cumA']=0
+					self.stats[tile]['cumC']=0
+					self.stats[tile]['cumG']=0
+					self.stats[tile]['cumT']=0
+					self.stats[tile]['cumN']=0
+					self.stats[tile]['cumARQ']=0.0
+					self.stats[tile]['cumMEE']=0.0
+					self.stats[tile]['Nreads']=0
+					self.stats[tile]['Nbases']=0					
+				self.stats[tile]['cumARQ']+=float(sum(r1.qual)+sum(r2.qual))/(len(r1)+len(r2))
+				qscores=list(r1.qual)
+				qscores.extend(list(r2.qual))
+				self.stats[tile]['cumMEE']+=reduce(lambda a,b:a+b,map(lambda x:self.q2mee[x],qscores))
+				self.stats[tile]['Nreads']+=1
+				self.stats[tile]['Nbases']+=(len(r1)+len(r2))
+				self.stats[tile]['cumA']+=(r1.seq+r2.seq).count("A")
+				self.stats[tile]['cumC']+=(r1.seq+r2.seq).count("C")
+				self.stats[tile]['cumG']+=(r1.seq+r2.seq).count("G")
+				self.stats[tile]['cumT']+=(r1.seq+r2.seq).count("T")
+				self.stats[tile]['cumN']+=(r1.seq+r2.seq).count("N")
+				for read,offset in [(r1,1001), (r2,2001)]:
+					for x in range(len(read)):
+						pos=offset+x
+						base=r1.seq[x]
+						qual=r1.qual[x]
+						mee=self.q2mee[qual]
+						cumbase="cum"+base
+						cumbaseq="cum"+base+"Q"
+						cumbasemee="cum"+base+"MEE"
+						try:
+							self.stats[tile]['position'][pos][cumbase]+=1
+							self.stats[tile]['position'][pos][cumbaseq]+=qual
+							self.stats[tile]['position'][pos][cumbasemee]+=mee
+						except KeyError: # pos does not exist
+							if not 'position' in self.stats[tile]:
+								self.stats[tile]['position']=dict()
+							self.stats[tile]['position'][pos]=dict()
+							for b in ["A", "C", "G", "T", "N"]:
+								cumb="cum"+b
+								cumbq="cum"+b+"Q"
+								cumbmee="cum"+b+"MEE"
+								self.stats[tile]['position'][pos][cumb]=0
+								self.stats[tile]['position'][pos][cumbq]=0
+								self.stats[tile]['position'][pos][cumbmee]=0.0
+							self.stats[tile]['position'][pos][cumbase]+=1
+							self.stats[tile]['position'][pos][cumbaseq]+=qual
+							self.stats[tile]['position'][pos][cumbasemee]+=mee
+# 				print r1.name
+# 				print json.dumps(self.stats,indent=4)
+# 				sys.exit()
+							
+										
+		return 1
+
+	def __init__(self,line,dir):
+		self.dir=dir
+		self.flowcellid=line[0]
+		self.lane=line[1]
+		self.sample=line[2]
+		self.index=line[4]
+		self.operatorName=line[-2]
+		self.operator=self.getOperator()
+		self.projectName=line[-1]
+		self.project,created=Projects.objects.update_or_create(project_name=self.projectName)
+		try:
+			self.r1=glob2.glob(dir+"/"+self.sample+"*_L00"+self.lane+"*_R1_001.fastq.gz")[0]
+		except IndexError:
+			self.r1=""
+		try:
+			self.r2=glob2.glob(dir+"/"+self.sample+"*_L00"+self.lane+"*_R2_001.fastq.gz")[0]
+		except IndexError:
+			self.r2=""
+		if self.r1!="":
+			self.instrument=self.getInstrument()
+		self.stats=dict()
+		self.obj=""
+		
+	def __str__(self):
+		return "Dir: %s \tFlowcell: %s \tLane: %s \tSample: %s \tIndex: %s \tProject: %s" %(self.dir, self.flowcellid, self.lane, self.sample, self.index, self.projectName)
+	
+		
+class Command(BaseCommand):
+    help = 'Calculating and inserting run data into the database.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('--rundate', nargs='?', type=str, help='Run date in YYMMDD format.', required=True)
+        parser.add_argument('--demuxfolder', nargs='?', type=str, help='Full path to demultiplexed folder', required=True)
+        parser.add_argument('--ncpus', nargs='?', type=int, help='Number of cores to use', required=False, default=4)
+        #parser.add_argument('--samplesheet', nargs='?', type=str, help='Full path to samplesheet.csv', required=True)
+
+    def handle(self, *args, **options):
+    	def calculatestats(ss):
+    		return ss.calculatestats()
+
+# get the date in right format
+    	if len(options['rundate']) != 6:
+    		sys.exit("Invalid run date entered!")
+    	else:
+    		runyear=int(options['rundate'][:2])+2000
+    		runmonth=int(options['rundate'][2:4])
+    		runday=int(options['rundate'][4:])
+    	rundate=datetime.date(runyear,runmonth,runday)
+
+# get all the samplesheet csv files and populate ss objects
+    	df=options['demuxfolder']
+    	if df.endswith("/"):
+    		df=df[:-1]
+    	ssfiles=glob2.glob(df+"/**/SampleSheet.csv")
+    	
+    	ss=[]
+    	for ssfile in ssfiles:
+    		dir=os.path.dirname(ssfile)
+    		ssfile_fh=open(ssfile)
+    		ssfile_lines=map(lambda x:x.strip().split(","),ssfile_fh.readlines())
+    		ssfile_lines.pop(0)
+    		ssfile_fh.close()
+    		ss.extend(map(lambda x:SSline(x,dir),ssfile_lines))
+
+    	flowcellid=[]
+    		
+    	for x in ss:
+    		flowcellid.append(x.flowcellid)
+    	
+    	flowcellid=list(set(flowcellid))
+    	if len(flowcellid)!=1:
+    		sys.exit("Multiple flowcellids found! Possibly data from multiple runs!")
+    	else:
+    		flowcellid=flowcellid[0]
+
+		run,created=Runs.objects.update_or_create(flowcell_id=flowcellid,
+		rundate=rundate,
+		operator=ss[0].operator,
+		instrument=ss[0].instrument)
+		
+		for x in ss:
+			x.obj,created=SampleSheet.objects.update_or_create(run_id=run,
+			lane=x.lane,
+			sample=x.sample,
+			index1=x.index,
+			project=x.project)
+			if created==0:
+				print "WARNING!!!! Samplesheet object \n"+str(x)+"\nalready in database! Was this run already imported to database before?"
+		
+		pool = ThreadPool(options['ncpus'])
+		results = pool.map(calculatestats, ss)
+		pool.close()
+		pool.join()
+		if sum(results)==len(ss):
+			for x in ss:
+				for t,tstats in x.stats.iteritems():
+					rsltobj,created=ReadStatsPerTile.objects.update_or_create(rsl=x.obj,
+					tile=t,
+					cum_a=tstats['cumA'],
+					cum_c=tstats['cumC'],
+					cum_g=tstats['cumG'],
+					cum_t=tstats['cumT'],
+					cum_n=tstats['cumN'],
+					cum_arq=tstats['cumARQ'],
+					cum_mee=tstats['cumMEE'],
+					nreads=tstats['Nreads'],
+					nbases=tstats['Nbases'])
+					for p,pdict in tstats['position'].iteritems():
+						rsltpobj,created=PositionStatsPerTile.objects.update_or_create(rslt=rsltobj,
+						position=p,
+						cum_a = pdict['cumA'],
+						cum_c = pdict['cumC'],
+						cum_t = pdict['cumT'],
+						cum_g = pdict['cumG'],
+						cum_n = pdict['cumN'],
+						cum_aq = pdict['cumAQ'],
+						cum_cq = pdict['cumCQ'],
+						cum_tq = pdict['cumTQ'],
+						cum_gq = pdict['cumGQ'],
+						cum_nq = pdict['cumNQ'],
+						cum_amee = pdict['cumAMEE'],
+						cum_cmee = pdict['cumCMEE'],
+						cum_tmee = pdict['cumTMEE'],
+						cum_gmee = pdict['cumGMEE'],
+						cum_nmee = pdict['cumNMEE'])
+# 				print x.dir
+# 				print json.dumps(x.stats,indent=4)
+# 		else:
+# 			print "FAILED!"
+
+
+
+#    def handle(self, *args, **options):
+#		ssfile=options['samplesheet']
+#		if os.access(ssfile,os.R_OK):
+#			ssfile_fh=open(ssfile)
+#			ssfile_lines=map(lambda x:x.strip().split(","),ssfile_fh.readlines())
+#			ssfile_lines.pop(0)
+#			ssfile_fh.close()
+#		else:
+#			sys.exit(ssfile+"... file does not exist!")
+#		ss=map(lambda x:SSline(x),ssfile_lines)
+#		projects=list(set(map(lambda x:x.project,ss)))
+#		lanes=list(set(map(lambda x:x.lane,ss)))
+#		flowcellid=ss[0].flowcellid
+#		project2id=dict()
+#		for p in projects:
+#			project2id[p]=Projects.objects.update_or_create(project_name=p)[0].project_id # update_or_create returns tuple(object,created(TorF))
+#			print project2id[p]
+#		#print project2id
+
+
+			
+		
+			

@@ -1,0 +1,47 @@
+[
+{
+    "model": "mihiseqaApp.instruments",
+    "pk": 1,
+    "fields": {
+        "instrument_name": "HiSeq1",
+        "serial_number": "HWI-ST425",
+        "description": null
+    }
+},
+{
+  "model": "mihiseqaApp.operators",
+  "pk": 1,
+  "fields": {
+    "first_name": "Vladimir",
+    "last_name": "Lee",
+    "email": null
+  }
+},
+{
+  "model": "mihiseqaApp.operators",
+  "pk": 2,
+  "fields": {
+    "first_name": "Shreni",
+    "last_name": "Mistry",
+    "email": null
+  }
+},
+{
+  "model": "mihiseqaApp.operators",
+  "pk": 3,
+  "fields": {
+    "first_name": "Purnima",
+    "last_name": "Theodore",
+    "email": null
+  }
+},
+{
+  "model": "mihiseqaApp.operators",
+  "pk": 4,
+  "fields": {
+    "first_name": "Ruihua",
+    "last_name": "Shi",
+    "email": null
+  }
+}
+]
